@@ -29,8 +29,13 @@ type TCPServer Server
 type UDPServer Server
 
 func NewServer(host string, port int) error {
+	// start TCP server
 	s := &TCPServer{host, port, make(chan struct{}, 1)}
 	go requestPoller()
+	// start HTTP server to access web UI
+	httpServer := HTTPServer{}
+	go httpServer.Start(host, port+1)
+
 	return s.Start()
 }
 
