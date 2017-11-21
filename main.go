@@ -18,7 +18,7 @@ func main() {
 		case "client":
 			err = NewClient("localhost", 8000)
 		case "server":
-			err = NewTCPServer("localhost", 8000)
+			err = NewServer("localhost", 8000)
 		case "exit":
 			return
 		default:

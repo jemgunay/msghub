@@ -47,15 +47,26 @@ func (c *Client) Start() error {
 	// continuously read from connection
 	go c.readFromConnection(conn)
 
-	// continuously process console input
+	// continuously process stdin console input
 	go func() {
 		for {
 			input := getConsoleInputRaw()
 			// exit
-			if input == "exit" {
+			switch input {
+			case "exit":
 				c.exit <- struct{}{}
 
-			} else {
+			case "leave":
+				// leave chat room
+				newMsg := Message{Type: "leave", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "foo_room"}
+				c.writeToConnection(conn, newMsg)
+
+			case "join":
+				// join chat room
+				newMsg := Message{Type: "join", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "foo_room"}
+				c.writeToConnection(conn, newMsg)
+
+			default:
 				// send msg to chat room
 				newMsg := Message{Type: "new_msg", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "foo_room", Text: input}
 				c.writeToConnection(conn, newMsg)
@@ -71,14 +82,6 @@ func (c *Client) Start() error {
 	newMsg = Message{Type: "join", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "foo_room"}
 	c.writeToConnection(conn, newMsg)
 
-	// send msg to chat room
-	newMsg = Message{Type: "new_msg", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "foo_room", Text: "this is a test message"}
-	c.writeToConnection(conn, newMsg)
-
-	// leave chat room
-	//newMsg = Message{Type: "leave", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "foo_room"}
-	//c.writeToConnection(conn, newMsg)
-
 	<-c.exit
 	return nil
 }
@@ -89,8 +92,7 @@ func (c *Client) readFromConnection(conn net.Conn) {
 	for {
 		request, err := bufio.NewReader(conn).ReadString('\n')
 		if err != nil {
-			//log.Fatal(err.Error())
-			os.Exit(1)
+			log.Fatalln("> Server closed connection.")
 		}
 
 		// push request job into channel for processing
@@ -159,13 +161,13 @@ func (c *Client) initUUID(conn net.Conn) UUID {
 	workingDir, err := os.Getwd()
 	name := getConsoleInput("Enter new or previously used user name")
 	//uuidFilePath = workingDir + "/src/github.com/jemgunay/msghub/client.dat"
-	uuidFilePath = workingDir + "/" + name + ".dat"
+	uuidFilePath = workingDir + "/data/" + name + ".dat"
 
 	// attempt to read UUID from file
 	uuid, err := c.readUUIDFromFile(uuidFilePath)
 	if err != nil {
 		// file did not exist, generate new UUID and save to new file
-		uuid, err = c.generateUUIDFile(workingDir + "/" + name + ".dat")
+		uuid, err = c.generateUUIDFile(workingDir + "/data/" + name + ".dat")
 		if err != nil {
 			log.Fatal("Could not locate existing or generate new client ID.")
 		}

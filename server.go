@@ -28,7 +28,7 @@ type Server struct {
 type TCPServer Server
 type UDPServer Server
 
-func NewTCPServer(host string, port int) error {
+func NewServer(host string, port int) error {
 	s := &TCPServer{host, port, make(chan struct{}, 1)}
 	go requestPoller()
 	return s.Start()
@@ -49,8 +49,8 @@ func (s *TCPServer) Start() error {
 	log.Printf("starting TCP server on port %d", s.port)
 
 	// create example rooms
-	NewRoom("foo_room", UUID("admin"))
-	NewRoom("bar_room", UUID("admin"))
+	NewRoom("room_1", UUID("admin"))
+	NewRoom("room_2", UUID("admin"))
 
 	// listen for new connections
 	for {
@@ -82,7 +82,7 @@ func (s *TCPServer) handleConn(conn net.Conn) {
 
 	// get client address
 	clientAddress := conn.RemoteAddr().String()
-	fmt.Println(clientAddress + " TCP client connection accepted")
+	fmt.Println(clientAddress + " TCP client connection established")
 
 	// scan input from connection
 	var clientUUID UUID
@@ -244,7 +244,7 @@ func (req *MessageRequest) processRequest() {
 	}
 }
 
-// Push new TCP messages from channel to connection.
+// Pull new TCP messages from channel to connection.
 func (s *TCPServer) clientWriter(conn net.Conn, ch <-chan string) {
 	for msg := range ch {
 		_, err := fmt.Fprintln(conn, msg)
@@ -259,7 +259,7 @@ func storeChatServer() error {
 	workingDir, err := os.Getwd()
 
 	// create/truncate file for writing to
-	file, err := os.Create(workingDir + "/src/github.com/jemgunay/msghub/users.dat")
+	file, err := os.Create(workingDir + "/src/github.com/jemgunay/msghub/data/users.dat")
 	defer file.Close()
 	if err != nil {
 		return err
@@ -280,7 +280,7 @@ func unpackChatServer() error {
 	workingDir, err := os.Getwd()
 
 	// open file to read from
-	file, err := os.Open(workingDir + "/src/github.com/jemgunay/msghub/users.dat")
+	file, err := os.Open(workingDir + "/src/github.com/jemgunay/msghub/data/users.dat")
 	defer file.Close()
 	if err != nil {
 		return err
