@@ -6,6 +6,9 @@ import (
 
 // Program entry point.
 func main() {
+	// continuously write to console output
+	go writeToStdout()
+
 	var err error
 
 	// determine if instance is a server or client

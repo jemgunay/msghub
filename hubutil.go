@@ -48,7 +48,7 @@ func (m *Message) unmarshalRequest(request string) {
 }
 
 var (
-	// all chat rooms (key is UUID, value is user object)
+	// all chat rooms (key is room name, value is user object)
 	rooms = make(map[string]*room)
 	// all connected clients (key is UUID, value is user object)
 	users = make(map[UUID]*user)
@@ -98,6 +98,13 @@ func (r *room) AddMessage(userID UUID, text string, msgType string) {
 	r.messages = append(r.messages, msg)
 }
 
+// Send message to all clients in room.
+func (r *room) Broadcast(msg Message) {
+	for id := range r.userIDs {
+		msg.marshalRequestToChan(users[UUID(id)].Out)
+	}
+}
+
 // Get a formatted date & time stamp.
 func GetTimestamp() string {
 	return time.Now().Format("_2/01/06 15:04")
@@ -111,14 +118,14 @@ func RoomExists(name string) bool {
 
 // Represents a single user.
 type user struct {
-	name   string
-	online bool
-	out    chan string
+	Name   string
+	Online bool
+	Out    chan string
 }
 
 // Add a new user.
 func NewUser(uuid UUID, name string, out chan string) {
-	users[uuid] = &user{name: name, out: out}
+	users[uuid] = &user{Name: name, Out: out}
 }
 
 // Check if user exists.
@@ -127,10 +134,28 @@ func UserExists(name UUID) bool {
 	return ok
 }
 
-// Print input requirement and get console input.
+// Channel for all std print output.
+var stdout = make(chan string)
+
+// Write responses to Stdout.
+func writeToStdout() {
+	for msg := range stdout {
+		fmt.Print(msg)
+	}
+}
+
+// Format & print input requirement and get console input.
 func getConsoleInput(inputMsg string) string {
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Print("> " + inputMsg + ":\n")
+	stdout <- "> " + inputMsg + ":\n"
+	text, _ := reader.ReadString('\n')
+	text = strings.TrimSpace(text)
+	return text
+}
+
+// Format & print input requirement and get console input.
+func getConsoleInputRaw() string {
+	reader := bufio.NewReader(os.Stdin)
 	text, _ := reader.ReadString('\n')
 	text = strings.TrimSpace(text)
 	return text

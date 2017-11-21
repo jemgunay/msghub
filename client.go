@@ -21,14 +21,14 @@ type Client struct {
 	host       string
 	port       int
 	exit       chan struct{}
-	stdout     chan string
 	clientUUID UUID
+	username   string
 }
 
 var uuidFilePath string
 
 func NewClient(host string, port int) error {
-	c := &Client{host, port, make(chan struct{}, 1), make(chan string), ""}
+	c := &Client{host: host, port: port, exit: make(chan struct{}, 1)}
 	return c.Start()
 }
 
@@ -44,10 +44,24 @@ func (c *Client) Start() error {
 	// assign UUID for this client
 	c.clientUUID = c.initUUID(conn)
 
-	// continuously write to console output
-	go c.writeToStdout()
 	// continuously read from connection
 	go c.readFromConnection(conn)
+
+	// continuously process console input
+	go func() {
+		for {
+			input := getConsoleInputRaw()
+			// exit
+			if input == "exit" {
+				c.exit <- struct{}{}
+
+			} else {
+				// send msg to chat room
+				newMsg := Message{Type: "new_msg", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "foo_room", Text: input}
+				c.writeToConnection(conn, newMsg)
+			}
+		}
+	}()
 
 	// request chat room list
 	newMsg := Message{Type: "list", TargetUUID: c.clientUUID, DateTime: GetTimestamp()}
@@ -62,19 +76,8 @@ func (c *Client) Start() error {
 	c.writeToConnection(conn, newMsg)
 
 	// leave chat room
-	newMsg = Message{Type: "leave", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "foo_room"}
-	c.writeToConnection(conn, newMsg)
-
-	// continuously process console input
-	go func() {
-		for {
-			input := getConsoleInput("type 'exit' to exit")
-			// exit
-			if input == "exit" {
-				c.exit <- struct{}{}
-			}
-		}
-	}()
+	//newMsg = Message{Type: "leave", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "foo_room"}
+	//c.writeToConnection(conn, newMsg)
 
 	<-c.exit
 	return nil
@@ -86,7 +89,8 @@ func (c *Client) readFromConnection(conn net.Conn) {
 	for {
 		request, err := bufio.NewReader(conn).ReadString('\n')
 		if err != nil {
-			log.Fatal(err.Error())
+			//log.Fatal(err.Error())
+			os.Exit(1)
 		}
 
 		// push request job into channel for processing
@@ -97,48 +101,47 @@ func (c *Client) readFromConnection(conn net.Conn) {
 }
 
 // Direct server responses to corresponding methods.
-func (c *Client) processResponse(msg Message) error {
+func (c *Client) processResponse(msg Message) {
 	// check for errors returned by server
 	if msg.Error != "" {
-		c.stdout <- msg.Error
-		return fmt.Errorf(msg.Error)
+		stdout <- "> Request error: " + msg.Error + "\n"
 	}
 
 	switch msg.Type {
 	// join server for the first time
 	case "set_name":
-		//fmt.Println(msg.Text)
-		c.stdout <- msg.Text
+		stdout <- msg.Text + "\n"
 
 	// join server for the first time
 	case "list":
 		if len(msg.Text) == 0 {
-			//fmt.Println("no rooms available")
-			c.stdout <- "no rooms available"
+			stdout <- "No rooms available\n"
 		}
-		//fmt.Println("chat rooms: " + msg.Text)
-		c.stdout <- "chat rooms: " + msg.Text
+		stdout <- "Available chat rooms: " + msg.Text + "\n"
 
 	// join a chat room
 	case "join":
-		//fmt.Println(msg.Text)
-		c.stdout <- msg.Text
+		if msg.Username == c.username {
+			stdout <- fmt.Sprintf("[%s] %s: %s\n", msg.Room, msg.Username, "You have joined the room.")
+			return
+		}
+		stdout <- fmt.Sprintf("[%s] %s: %s\n", msg.Room, msg.Username, "Joined the room.")
 
 	// leave chat room
 	case "leave":
-		//fmt.Println(msg.Text)
-		c.stdout <- msg.Text
-		c.stdout <- fmt.Sprintf("[%s] %s: %s", msg.Room, msg.Username, msg.Text)
+		if msg.Username == c.username {
+			stdout <- fmt.Sprintf("[%s] %s: %s\n", msg.Room, msg.Username, "You are leaving the room.")
+			return
+		}
+		stdout <- fmt.Sprintf("[%s] %s: %s\n", msg.Room, msg.Username, "Left the room.")
 
 	// a standard message to a server room
 	case "new_msg":
-		c.stdout <- fmt.Sprintf("[%s] %s: %s", msg.Room, msg.Username, msg.Text)
+		stdout <- fmt.Sprintf("[%s] %s: %s\n", msg.Room, msg.Username, msg.Text)
 
 	default:
-		return fmt.Errorf("request message type not recognised")
+		stdout <- "> Request message type not recognised\n"
 	}
-
-	return nil
 }
 
 // Write message to connection.
@@ -150,27 +153,17 @@ func (c *Client) writeToConnection(conn net.Conn, msg Message) {
 	fmt.Fprintf(conn, str+"\n")
 }
 
-// Write responses to Stdout.
-func (c *Client) writeToStdout() {
-	for msg := range c.stdout {
-		fmt.Println(msg)
-	}
-}
-
 // Read UUID from file or generate a new one if file does not exist.
 func (c *Client) initUUID(conn net.Conn) UUID {
 	// UUID file path
-	clientFile := getConsoleInput("enter .dat user file (leave blank to create new user)")
 	workingDir, err := os.Getwd()
+	name := getConsoleInput("Enter new or previously used user name")
 	//uuidFilePath = workingDir + "/src/github.com/jemgunay/msghub/client.dat"
-	uuidFilePath = workingDir + "/" + clientFile
+	uuidFilePath = workingDir + "/" + name + ".dat"
 
 	// attempt to read UUID from file
 	uuid, err := c.readUUIDFromFile(uuidFilePath)
 	if err != nil {
-		// get new user name
-		name := getConsoleInput("enter new username")
-
 		// file did not exist, generate new UUID and save to new file
 		uuid, err = c.generateUUIDFile(workingDir + "/" + name + ".dat")
 		if err != nil {
@@ -182,6 +175,7 @@ func (c *Client) initUUID(conn net.Conn) UUID {
 		c.writeToConnection(conn, nameMsg)
 	}
 
+	c.username = name
 	return UUID(uuid)
 }
 
