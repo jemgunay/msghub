@@ -32,7 +32,8 @@ html, body {
     position: absolute;
     bottom: 0;
     background-color: rgba(234, 234, 234, 0.2);
-    padding-top: 10px;
+    padding: 10px 10px 0 10px;
+    
 }
 #input-pane button {
     width: 75px;
@@ -40,11 +41,25 @@ html, body {
 
 .well {
     margin: 10px;
+    background-color: #ADB6B5;
 }
 .well h3 {
     margin: 10px;
+    color: #FFF;
 }
 .panel {
     margin-bottom: 10px;
     display: inline-block;
+}
+.panel-body {
+    background-color: #31C3E7;
+}
+.panel-body.panel-self {
+    background-color: #8CC739;
+}
+.panel-body p {
+    margin-bottom: 0;
+}
+.panel-body h4 {
+    margin-top: 0;
 }

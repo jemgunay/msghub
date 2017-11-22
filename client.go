@@ -23,6 +23,7 @@ type Client struct {
 	exit       chan struct{}
 	clientUUID UUID
 	username   string
+	httpServer HTTPServer
 }
 
 var uuidFilePath string
@@ -44,6 +45,9 @@ func (c *Client) Start() error {
 	// assign UUID for this client
 	c.clientUUID = c.initUUID(conn)
 
+	// start HTTP server to access web UI
+	go c.httpServer.Start(c)
+
 	// continuously read from connection
 	go c.readFromConnection(conn)
 
@@ -53,22 +57,28 @@ func (c *Client) Start() error {
 			input := getConsoleInputRaw()
 			// exit
 			switch input {
+			// request chat room list
+			case "list":
+				newMsg := Message{Type: "list", TargetUUID: c.clientUUID, DateTime: GetTimestamp()}
+				c.writeToConnection(conn, newMsg)
+
+				// leave chat room
+			case "leave":
+				newMsg := Message{Type: "leave", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "room_1"}
+				c.writeToConnection(conn, newMsg)
+
+				// join chat room
+			case "join":
+				newMsg := Message{Type: "join", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "room_1"}
+				c.writeToConnection(conn, newMsg)
+
+				// exit client
 			case "exit":
 				c.exit <- struct{}{}
 
-			case "leave":
-				// leave chat room
-				newMsg := Message{Type: "leave", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "foo_room"}
-				c.writeToConnection(conn, newMsg)
-
-			case "join":
-				// join chat room
-				newMsg := Message{Type: "join", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "foo_room"}
-				c.writeToConnection(conn, newMsg)
-
 			default:
 				// send msg to chat room
-				newMsg := Message{Type: "new_msg", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "foo_room", Text: input}
+				newMsg := Message{Type: "new_msg", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "room_1", Text: input}
 				c.writeToConnection(conn, newMsg)
 			}
 		}
@@ -79,8 +89,8 @@ func (c *Client) Start() error {
 	c.writeToConnection(conn, newMsg)
 
 	// join chat room
-	newMsg = Message{Type: "join", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "foo_room"}
-	c.writeToConnection(conn, newMsg)
+	//newMsg = Message{Type: "join", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "room_1"}
+	//c.writeToConnection(conn, newMsg)
 
 	<-c.exit
 	return nil
@@ -90,14 +100,19 @@ func (c *Client) Start() error {
 func (c *Client) readFromConnection(conn net.Conn) {
 	// continuously poll for messages
 	for {
-		request, err := bufio.NewReader(conn).ReadString('\n')
+		response, err := bufio.NewReader(conn).ReadString('\n')
 		if err != nil {
 			log.Fatalln("> Server closed connection.")
 		}
 
+		// pass new response to web UI feed
+		go func() {
+			c.httpServer.refreshFeed <- response
+		}()
+
 		// push request job into channel for processing
 		var msg Message
-		msg.unmarshalRequest(request)
+		msg.unmarshalRequest(response)
 		c.processResponse(msg)
 	}
 }
@@ -107,6 +122,7 @@ func (c *Client) processResponse(msg Message) {
 	// check for errors returned by server
 	if msg.Error != "" {
 		stdout <- "> Request error: " + msg.Error + "\n"
+		return
 	}
 
 	switch msg.Type {

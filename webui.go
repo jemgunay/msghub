@@ -3,77 +3,104 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
-	"strings"
-
-	"strconv"
-
 	"os"
+	"os/exec"
+	"runtime"
+	"strconv"
+	"time"
 
 	"github.com/gorilla/mux"
 )
 
-type HTTPServer Server
+type HTTPServer struct {
+	Server
+	refreshFeed chan string
+}
 
 // Start listening for HTTP requests.
-func (s *HTTPServer) Start(host string, port int) error {
+func (s *HTTPServer) Start(client *Client) {
+	s.refreshFeed = make(chan string)
+
 	workingDir, err := os.Getwd()
+	if err != nil {
+		stdout <- err.Error()
+		return
+	}
 
 	// define HTTP routes
 	router := mux.NewRouter()
-	// serve static files
-	router.PathPrefix("/").Handler(http.StripPrefix("/", http.FileServer(http.Dir(workingDir+"/src/github.com/jemgunay/msghub/static/")))).Methods("GET")
+	// pull new content from channel
+	router.HandleFunc("/refresh/", s.handleRefresh).Methods("GET")
 	// chat server related requests
-	router.HandleFunc("/", s.handleHTTPRequests).Methods("POST")
+	router.HandleFunc("/request/{type}/{room}/", s.handleRequest).Methods("POST")
+	// serve static files
+	router.PathPrefix("/").Handler(http.StripPrefix("/", http.FileServer(http.Dir(workingDir+"/static/")))).Methods("GET")
+
+	// generate random port for http server and open in browser
+	s1 := rand.NewSource(time.Now().UnixNano())
+	r1 := rand.New(s1)
+	s.port = client.port + 1 + r1.Intn(1000)
+	go openBrowser("http://" + client.host + ":" + strconv.Itoa(s.port))
+
+	// TEMP: drain feed
+	/*go func() {
+		for {
+			<-s.refreshFeed
+		}
+	}()*/
 
 	// listen for HTTP requests
-	log.Printf("starting HTTP server on port %d", port)
-	err = http.ListenAndServe(host+":"+strconv.Itoa(port), router)
+	log.Printf("starting HTTP server on port %d", s.port)
+	err = http.ListenAndServe(client.host+":"+strconv.Itoa(s.port), router)
 	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// Process HTTP client requests and handle HTTP responses.
-func (s *HTTPServer) handleHTTPRequests(w http.ResponseWriter, req *http.Request) {
-	// outgoing client messages
-	ch := make(chan string)
-
-	// get URL path components
-	urlParts := strings.Split(req.URL.Path, "/")
-
-	// route URL requests
-	switch {
-
-	case req.URL.Path == "/":
-
-	// process specific request
-	case len(urlParts) > 1:
-		// group request information
-		w.WriteHeader(http.StatusOK)
-		//accessRequest := AccessRequest{store: s.store, methodVerb: req.Method, key: mux.Vars(req)["key"], value: mux.Vars(req)["val"], out: ch}
-		//requestPool <- accessRequest
-
-		// send response to client
-		s.clientWriter(w, ch)
-
-	// unsupported request
-	default:
-		// http 404 response
-		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprintf(w, "page '%s' not found\n", req.URL.Path)
+		stdout <- err.Error()
 	}
 }
 
-// Push new HTTP responses to connection.
-func (s *HTTPServer) clientWriter(w http.ResponseWriter, ch <-chan string) {
-	for msg := range ch {
+// Process HTTP client request to pull fresh chat data.
+func (s *HTTPServer) handleRefresh(w http.ResponseWriter, req *http.Request) {
+	w.WriteHeader(http.StatusOK)
+
+	select {
+	case msg := <-s.refreshFeed:
 		_, err := fmt.Fprintf(w, "%s\n", msg)
 		if err != nil {
 			log.Println(err)
 		}
-		return
+	default:
+		_, err := fmt.Fprintf(w, "%s\n", "")
+		if err != nil {
+			log.Println(err)
+		}
 	}
+}
+
+// Process HTTP client request to set client chat states.
+func (s *HTTPServer) handleRequest(w http.ResponseWriter, req *http.Request) {
+	w.WriteHeader(http.StatusOK)
+
+	_, err := fmt.Fprintf(w, "%s\n", "response_test")
+	if err != nil {
+		log.Println(err)
+	}
+}
+
+// Opens the specified URL in the default browser.
+func openBrowser(url string) error {
+	var cmd string
+	var args []string
+
+	switch runtime.GOOS {
+	case "windows":
+		cmd = "cmd"
+		args = []string{"/c", "start"}
+	case "darwin":
+		cmd = "open"
+	default: // "linux", "freebsd", "openbsd", "netbsd"
+		cmd = "xdg-open"
+	}
+	args = append(args, url)
+	return exec.Command(cmd, args...).Start()
 }

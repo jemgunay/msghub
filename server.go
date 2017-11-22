@@ -29,49 +29,72 @@ type TCPServer Server
 type UDPServer Server
 
 func NewServer(host string, port int) error {
-	// start TCP server
-	s := &TCPServer{host, port, make(chan struct{}, 1)}
-	go requestPoller()
-	// start HTTP server to access web UI
-	httpServer := HTTPServer{}
-	go httpServer.Start(host, port+1)
-
-	return s.Start()
-}
-
-// Start listening over TCP on a specified port via a specified protocol.
-func (s *TCPServer) Start() error {
+	// populate server data stores from file
 	err := unpackChatServer()
 	if err != nil {
 		log.Println(err.Error())
 	}
 
-	// start listener
-	listener, err := net.Listen("tcp", s.host+":"+strconv.Itoa(s.port))
-	if err != nil {
-		return fmt.Errorf("cannot create a TCP listener on %s:%d", s.host, s.port)
-	}
-	log.Printf("starting TCP server on port %d", s.port)
-
 	// create example rooms
 	NewRoom("room_1", UUID("admin"))
 	NewRoom("room_2", UUID("admin"))
 
-	// listen for new connections
-	for {
-		conn, err := listener.Accept()
-		// connection error
-		if err != nil {
-			log.Print(err)
-			continue
-		}
+	go requestPoller()
 
-		// handle connection
-		go s.handleConn(conn)
+	// start TCP & UDP servers
+	ts := &TCPServer{host, port, make(chan struct{}, 1)}
+	us := &UDPServer{host, port, make(chan struct{}, 1)}
+
+	// return first error to caller
+	var errors chan error
+	go ts.Start(errors)
+	go us.Start(errors)
+
+	// continuously process stdin console input
+	func() {
+		for {
+			input := getConsoleInputRaw()
+			switch input {
+			// exit server
+			case "exit":
+				ts.exit <- struct{}{}
+				us.exit <- struct{}{}
+				errors <- nil
+				return
+			}
+		}
+	}()
+
+	return <-errors
+}
+
+// Start listening over TCP on a specified port via a specified protocol.
+func (s *TCPServer) Start(errors chan error) {
+	// start listener
+	listener, err := net.Listen("tcp", s.host+":"+strconv.Itoa(s.port))
+	if err != nil {
+		errors <- fmt.Errorf("cannot create a TCP listener on %s:%d", s.host, s.port)
+		return
 	}
+	log.Printf("starting TCP server on port %d", s.port)
+
+	// listen for new connections
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			// connection error
+			if err != nil {
+				log.Print(err)
+				continue
+			}
+
+			// handle connection
+			go s.handleConn(conn)
+		}
+	}()
 
 	<-s.exit
-	return nil
+	errors <- nil
 }
 
 // Process newly accepted TCP connection and associated client.
@@ -109,6 +132,88 @@ func (s *TCPServer) handleConn(conn net.Conn) {
 	requestPool <- MessageRequest{msg: &exitMsg}
 }
 
+// Pull new TCP messages from channel to connection.
+func (s *TCPServer) clientWriter(conn net.Conn, ch <-chan string) {
+	for msg := range ch {
+		_, err := fmt.Fprintln(conn, msg)
+		if err != nil {
+			log.Println("Error responding to client: " + err.Error())
+		}
+	}
+}
+
+// Start listening over UDP on a specified port via a specified protocol.
+func (s *UDPServer) Start(errors chan error) {
+	// prepare UDP server address
+	udpAddr := net.UDPAddr{
+		Port: s.port,
+		IP:   net.ParseIP(s.host),
+	}
+
+	// create UDP listener
+	listener, err := net.ListenUDP("udp", &udpAddr)
+	if err != nil {
+		errors <- fmt.Errorf("cannot create a UDP listener on %s:%d", s.host, s.port)
+		return
+	}
+	log.Printf("starting UDP server on port %d", s.port)
+
+	// constantly poll for udp requests
+	go func() {
+		for {
+			// read from UDP connection to buffer
+			buffer := make([]byte, 2048)
+			n, remoteAddr, err := listener.ReadFromUDP(buffer)
+			// read error
+			if err != nil {
+				log.Print(err)
+				continue
+			}
+
+			// create string form byte array buffer
+			request := string(buffer[:n])
+
+			// handle request
+			go s.handleConn(listener, remoteAddr, request)
+		}
+	}()
+
+	<-s.exit
+	errors <- nil
+}
+
+// Process newly accepted UDP connection and associated client.
+func (s *UDPServer) handleConn(conn *net.UDPConn, addr *net.UDPAddr, request string) {
+	// outgoing client messages
+	ch := make(chan string)
+
+	// send response to client
+	go s.clientWriter(conn, addr, ch)
+
+	// get client address
+	fmt.Println(addr.String() + " UDP client request received")
+
+	// unmarshal client string request into Message object
+	msg := Message{}
+	msg.unmarshalRequest(request)
+
+	// produce response based on request
+	requestPool <- MessageRequest{&msg, ch}
+}
+
+// Push new UDP messages from channel to connection.
+func (s *UDPServer) clientWriter(conn *net.UDPConn, addr *net.UDPAddr, ch <-chan string) {
+	for msg := range ch {
+		_, err := conn.WriteToUDP([]byte(msg+"\n"), addr)
+		if err != nil {
+			fmt.Printf("Couldn't send UDP response %v", err)
+		}
+	}
+
+	// client disconnecting
+	fmt.Println(addr.String() + " UDP response transmitted to client")
+}
+
 // A message request format accepted by the request poller.
 type MessageRequest struct {
 	msg *Message
@@ -123,6 +228,12 @@ func requestPoller() {
 
 	for currentRequest := range requestPool {
 		currentRequest.processRequest()
+	}
+
+	// update user persistence file
+	err := storeChatServer()
+	if err != nil {
+		log.Println(err.Error())
 	}
 }
 
@@ -152,8 +263,6 @@ func (req *MessageRequest) processRequest() {
 		log.Printf("user with UUID '%s' set their name to '%s'", staleMsg.TargetUUID, staleMsg.Text)
 		freshMsg.Text = fmt.Sprintf("user name successfully set to '%s'", staleMsg.Text)
 
-		freshMsg.marshalRequestToChan(req.out)
-
 	// list all chat rooms
 	case "list":
 		i := 0
@@ -164,8 +273,6 @@ func (req *MessageRequest) processRequest() {
 			}
 			i++
 		}
-
-		freshMsg.marshalRequestToChan(req.out)
 
 	// join a chat room
 	case "join":
@@ -183,6 +290,7 @@ func (req *MessageRequest) processRequest() {
 		rooms[staleMsg.Room].messages = append(rooms[staleMsg.Room].messages, freshMsg)
 
 		rooms[staleMsg.Room].Broadcast(freshMsg)
+		return
 
 	// leave chat room
 	case "leave":
@@ -195,11 +303,12 @@ func (req *MessageRequest) processRequest() {
 			freshMsg.Error = "user is not subscribed to this room."
 			break
 		}
-		rooms[staleMsg.Room].RemoveUser(staleMsg.TargetUUID)
 		freshMsg.Text = fmt.Sprintf("user '%s' removed from the '%s' room", users[UUID(staleMsg.TargetUUID)].Name, staleMsg.Room)
 		rooms[staleMsg.Room].messages = append(rooms[staleMsg.Room].messages, freshMsg)
 
 		rooms[staleMsg.Room].Broadcast(freshMsg)
+		rooms[staleMsg.Room].RemoveUser(staleMsg.TargetUUID)
+		return
 
 	// a standard message to server
 	case "new_msg":
@@ -218,12 +327,13 @@ func (req *MessageRequest) processRequest() {
 
 		// broadcast to all clients subscribed to room
 		rooms[staleMsg.Room].Broadcast(freshMsg)
+		return
 
 	// client connection dropped
 	case "exit":
 		// unsubscribe user from each room
 		for name := range rooms {
-			// check if user is subscribed to the room
+			// check if user is subscribed to the current room
 			if rooms[name].IsUserSubscribed(staleMsg.TargetUUID) == false {
 				continue
 			}
@@ -237,26 +347,14 @@ func (req *MessageRequest) processRequest() {
 
 			rooms[name].Broadcast(freshMsg)
 		}
+		return
 
 	default:
 		freshMsg.Error = "request type not recognised"
 	}
 
-	// update user persistence file
-	err := storeChatServer()
-	if err != nil {
-		log.Println(err.Error())
-	}
-}
-
-// Pull new TCP messages from channel to connection.
-func (s *TCPServer) clientWriter(conn net.Conn, ch <-chan string) {
-	for msg := range ch {
-		_, err := fmt.Fprintln(conn, msg)
-		if err != nil {
-			log.Println("Error responding to client: " + err.Error())
-		}
-	}
+	// if request was not broadcasted above, then send response to the client who made the request only
+	freshMsg.marshalRequestToChan(req.out)
 }
 
 // Store server user and room data to file.
@@ -264,7 +362,7 @@ func storeChatServer() error {
 	workingDir, err := os.Getwd()
 
 	// create/truncate file for writing to
-	file, err := os.Create(workingDir + "/src/github.com/jemgunay/msghub/data/users.dat")
+	file, err := os.Create(workingDir + "/data/users.dat")
 	defer file.Close()
 	if err != nil {
 		return err
@@ -285,7 +383,7 @@ func unpackChatServer() error {
 	workingDir, err := os.Getwd()
 
 	// open file to read from
-	file, err := os.Open(workingDir + "/src/github.com/jemgunay/msghub/data/users.dat")
+	file, err := os.Open(workingDir + "/data/users.dat")
 	defer file.Close()
 	if err != nil {
 		return err
