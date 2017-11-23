@@ -17,10 +17,12 @@ import (
 type HTTPServer struct {
 	Server
 	refreshFeed chan string
+	client      *Client
 }
 
 // Start listening for HTTP requests.
 func (s *HTTPServer) Start(client *Client) {
+	s.client = client
 	s.refreshFeed = make(chan string)
 
 	workingDir, err := os.Getwd()
@@ -33,8 +35,10 @@ func (s *HTTPServer) Start(client *Client) {
 	router := mux.NewRouter()
 	// pull new content from channel
 	router.HandleFunc("/refresh/", s.handleRefresh).Methods("GET")
+	// retrieve client username
+	router.HandleFunc("/fetch/{type}/", s.handleSpecificRequest).Methods("GET")
 	// chat server related requests
-	router.HandleFunc("/request/{type}/{room}/", s.handleRequest).Methods("POST")
+	router.HandleFunc("/request/", s.handleGeneralRequest).Methods("POST")
 	// serve static files
 	router.PathPrefix("/").Handler(http.StripPrefix("/", http.FileServer(http.Dir(workingDir+"/static/")))).Methods("GET")
 
@@ -43,13 +47,6 @@ func (s *HTTPServer) Start(client *Client) {
 	r1 := rand.New(s1)
 	s.port = client.port + 1 + r1.Intn(1000)
 	go openBrowser("http://" + client.host + ":" + strconv.Itoa(s.port))
-
-	// TEMP: drain feed
-	/*go func() {
-		for {
-			<-s.refreshFeed
-		}
-	}()*/
 
 	// listen for HTTP requests
 	log.Printf("starting HTTP server on port %d", s.port)
@@ -78,10 +75,33 @@ func (s *HTTPServer) handleRefresh(w http.ResponseWriter, req *http.Request) {
 }
 
 // Process HTTP client request to set client chat states.
-func (s *HTTPServer) handleRequest(w http.ResponseWriter, req *http.Request) {
+func (s *HTTPServer) handleGeneralRequest(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
-	_, err := fmt.Fprintf(w, "%s\n", "response_test")
+	// perform server request
+	req.ParseForm()
+	msg := Message{TargetUUID: s.client.clientUUID, Type: req.Form.Get("Type"), Room: req.Form.Get("Room"), Text: req.Form.Get("Text"), DateTime: GetTimestamp()}
+	s.client.writeToConnection(s.client.conn, msg)
+
+	// empty http response
+	_, err := fmt.Fprintf(w, "%s\n", "")
+	if err != nil {
+		log.Println(err)
+	}
+}
+
+// Process HTTP client request for the client username.
+func (s *HTTPServer) handleSpecificRequest(w http.ResponseWriter, req *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	var err error
+	switch mux.Vars(req)["type"] {
+	case "name":
+		_, err = fmt.Fprintf(w, "%s", s.client.username)
+	case "exit":
+		s.client.exit <- struct{}{}
+		os.Exit(1)
+	}
+
 	if err != nil {
 		log.Println(err)
 	}

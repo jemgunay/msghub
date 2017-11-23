@@ -281,7 +281,8 @@ func (req *MessageRequest) processRequest() {
 			freshMsg.Error = "room already exists"
 			break
 		}
-		if strings.ContainsAny(staleMsg.Room, " ") {
+		// validate name
+		if strings.ContainsAny(staleMsg.Room, " ") && strings.TrimSpace(staleMsg.Room) == "" {
 			freshMsg.Error = "room name must not contain white space"
 			break
 		}

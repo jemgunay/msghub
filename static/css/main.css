@@ -63,3 +63,18 @@ html, body {
 .panel-body h4 {
     margin-top: 0;
 }
+.room-btn {
+    color: #FFF;
+    text-decoration: none;
+}
+.room-btn:hover, .room-btn:active, .room-btn:focus {
+    color: #085DAD;
+    text-decoration: none;
+}
+#room-control {
+    text-align: center;
+    margin-top: 10px;
+}
+.btn-group {
+    margin-top: 5px;
+}

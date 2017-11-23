@@ -27,6 +27,7 @@ type Client struct {
 	username   string
 	httpServer HTTPServer
 	protocol   string
+	conn       net.Conn
 }
 
 var uuidFilePath string
@@ -50,6 +51,7 @@ func (c *Client) Start() error {
 		return err
 	}
 	defer conn.Close()
+	c.conn = conn
 
 	// assign UUID for this client
 	c.clientUUID = c.initUUID(conn)
@@ -207,10 +209,14 @@ func (c *Client) processResponse(msg Message) {
 // Write message to connection.
 func (c *Client) writeToConnection(conn net.Conn, msg Message) {
 	str, err := msg.marshalRequest()
+
 	if err != nil {
 		log.Printf(err.Error())
 	}
-	fmt.Fprintf(conn, str+"\n")
+	_, err = fmt.Fprintf(conn, str+"\n")
+	if err != nil {
+		log.Printf(err.Error())
+	}
 }
 
 // Read UUID from file or generate a new one if file does not exist.
@@ -218,7 +224,6 @@ func (c *Client) initUUID(conn net.Conn) UUID {
 	// UUID file path
 	workingDir, err := os.Getwd()
 	name := getConsoleInput("Enter new or previously used user name")
-	//uuidFilePath = workingDir + "/src/github.com/jemgunay/msghub/client.dat"
 	uuidFilePath = workingDir + "/data/" + name + ".dat"
 
 	// attempt to read UUID from file
