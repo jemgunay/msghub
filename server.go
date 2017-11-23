@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Supported service Protocol types.
@@ -170,7 +171,7 @@ func (s *UDPServer) Start(errors chan error) {
 				continue
 			}
 
-			// create string form byte array buffer
+			// create string from byte array buffer
 			request := string(buffer[:n])
 
 			// handle request
@@ -273,6 +274,40 @@ func (req *MessageRequest) processRequest() {
 			}
 			i++
 		}
+
+	// create a chat room
+	case "create":
+		if RoomExists(staleMsg.Room) {
+			freshMsg.Error = "room already exists"
+			break
+		}
+		if strings.ContainsAny(staleMsg.Room, " ") {
+			freshMsg.Error = "room name must not contain white space"
+			break
+		}
+		// create room
+		NewRoom(staleMsg.Room, staleMsg.TargetUUID)
+		rooms[staleMsg.Room].creator = staleMsg.TargetUUID
+		freshMsg.Text = fmt.Sprintf("You have created the '%s' room", staleMsg.Room)
+		rooms[staleMsg.Room].messages = append(rooms[staleMsg.Room].messages, freshMsg)
+
+	// destroy a chat room
+	case "destroy":
+		if RoomExists(staleMsg.Room) == false {
+			freshMsg.Error = "specified room does not exist"
+			break
+		}
+		if rooms[staleMsg.Room].creator != staleMsg.TargetUUID {
+			freshMsg.Error = "only the creator of a room can destroy it"
+			break
+		}
+		// create room
+		freshMsg.Text = fmt.Sprintf("user '%s' destroyed the '%s' room", users[UUID(staleMsg.TargetUUID)].Name, staleMsg.Room)
+		rooms[staleMsg.Room].messages = append(rooms[staleMsg.Room].messages, freshMsg)
+
+		rooms[staleMsg.Room].Broadcast(freshMsg)
+		RemoveRoom(staleMsg.Room)
+		return
 
 	// join a chat room
 	case "join":

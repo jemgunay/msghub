@@ -13,6 +13,8 @@ import (
 
 	"strconv"
 
+	"strings"
+
 	"github.com/twinj/uuid"
 )
 
@@ -24,19 +26,26 @@ type Client struct {
 	clientUUID UUID
 	username   string
 	httpServer HTTPServer
+	protocol   string
 }
 
 var uuidFilePath string
 
 func NewClient(host string, port int) error {
-	c := &Client{host: host, port: port, exit: make(chan struct{}, 1)}
+	// continuously process stdin console input
+	input := getConsoleInput("Protocol: tcp or udp (default tcp)")
+	if input != "tcp" && input != "udp" {
+		input = "tcp"
+	}
+
+	c := &Client{host: host, port: port, exit: make(chan struct{}, 1), protocol: input}
 	return c.Start()
 }
 
 // Start a new client instance.
 func (c *Client) Start() error {
 	// connect to server
-	conn, err := net.Dial("tcp", c.host+":"+strconv.Itoa(c.port))
+	conn, err := net.Dial(c.protocol, c.host+":"+strconv.Itoa(c.port))
 	if err != nil {
 		return err
 	}
@@ -55,30 +64,51 @@ func (c *Client) Start() error {
 	go func() {
 		for {
 			input := getConsoleInputRaw()
-			// exit
+
 			switch input {
 			// request chat room list
 			case "list":
 				newMsg := Message{Type: "list", TargetUUID: c.clientUUID, DateTime: GetTimestamp()}
 				c.writeToConnection(conn, newMsg)
 
-				// leave chat room
-			case "leave":
-				newMsg := Message{Type: "leave", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "room_1"}
-				c.writeToConnection(conn, newMsg)
-
-				// join chat room
-			case "join":
-				newMsg := Message{Type: "join", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "room_1"}
-				c.writeToConnection(conn, newMsg)
-
-				// exit client
+			// exit client
 			case "exit":
 				c.exit <- struct{}{}
+				os.Exit(1)
 
+			// multi-parameter commands
 			default:
+				// ensure parameter length hof 2
+				inputComponents := strings.Split(input, " ")
+				if len(inputComponents) < 2 {
+					stdout <- "Unsupported command: too few parameters.\n"
+					continue
+				}
+
+				var newMsg Message
+				switch inputComponents[0] {
+				// create chat room
+				case "create":
+					newMsg = Message{Type: "create", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: inputComponents[1]}
+
+				// destroy chat room
+				case "destroy":
+					newMsg = Message{Type: "destroy", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: inputComponents[1]}
+
+				// join chat room
+				case "join":
+					newMsg = Message{Type: "join", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: inputComponents[1]}
+
+				// leave chat room
+				case "leave":
+					newMsg = Message{Type: "leave", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: inputComponents[1]}
+
 				// send msg to chat room
-				newMsg := Message{Type: "new_msg", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: "room_1", Text: input}
+				default:
+					msgText := strings.Join(inputComponents[1:], ",")
+					newMsg = Message{Type: "new_msg", TargetUUID: c.clientUUID, DateTime: GetTimestamp(), Room: inputComponents[0], Text: msgText}
+				}
+
 				c.writeToConnection(conn, newMsg)
 			}
 		}
@@ -129,6 +159,18 @@ func (c *Client) processResponse(msg Message) {
 	// join server for the first time
 	case "set_name":
 		stdout <- msg.Text + "\n"
+
+	// create a chat room
+	case "create":
+		stdout <- msg.Text + "\n"
+
+	// destroy a chat room
+	case "destroy":
+		if msg.Username == c.username {
+			stdout <- fmt.Sprintf("[%s]: You have destroyed the room.\n", msg.Room)
+			return
+		}
+		stdout <- fmt.Sprintf("[%s]: This room has been destroyed by '%s'.\n", msg.Room, msg.Username)
 
 	// join server for the first time
 	case "list":

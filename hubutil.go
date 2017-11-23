@@ -75,6 +75,17 @@ func NewRoom(name string, creator UUID) (*room, error) {
 	return r, nil
 }
 
+// Remove user from chat room.
+func RemoveRoom(roomName string) {
+	delete(rooms, roomName)
+}
+
+// Check if a room exists.
+func RoomExists(name string) bool {
+	_, ok := rooms[name]
+	return ok
+}
+
 // Add user to chat room.
 func (r *room) AddUser(userID UUID) {
 	r.userIDs[userID] = true
@@ -108,12 +119,6 @@ func (r *room) Broadcast(msg Message) {
 // Get a formatted date & time stamp.
 func GetTimestamp() string {
 	return time.Now().Format("_2/01/06 15:04")
-}
-
-// Check if a room exists.
-func RoomExists(name string) bool {
-	_, ok := rooms[name]
-	return ok
 }
 
 // Represents a single user.
