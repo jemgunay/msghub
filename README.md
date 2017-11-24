@@ -12,3 +12,5 @@ A basic chat room orientated message hub (server and client in one application) 
 
 ### TODO
 * Persist rooms on restart
+* Add hostname flag at startup
+* Auto join room on join success (on UI)

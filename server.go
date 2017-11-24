@@ -230,12 +230,6 @@ func requestPoller() {
 	for currentRequest := range requestPool {
 		currentRequest.processRequest()
 	}
-
-	// update user persistence file
-	err := storeChatServer()
-	if err != nil {
-		log.Println(err.Error())
-	}
 }
 
 // Direct requests to corresponding methods.
@@ -263,6 +257,12 @@ func (req *MessageRequest) processRequest() {
 		NewUser(staleMsg.TargetUUID, staleMsg.Text, req.out)
 		log.Printf("user with UUID '%s' set their name to '%s'", staleMsg.TargetUUID, staleMsg.Text)
 		freshMsg.Text = fmt.Sprintf("user name successfully set to '%s'", staleMsg.Text)
+
+		// update user persistence file
+		err := storeChatServer()
+		if err != nil {
+			log.Println(err.Error())
+		}
 
 	// list all chat rooms
 	case "list":
